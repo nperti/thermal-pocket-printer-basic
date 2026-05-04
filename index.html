@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>C&Co 3128 Printer</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap');
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #0a0a0a;
+      color: #e8e8e8;
+      font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
+      min-height: 100vh;
+    }
+
+    header {
+      border-bottom: 1px solid #222;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .logo {
+      width: 32px;
+      height: 32px;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+    }
+
+    .title {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      font-size: 11px;
+      color: #888;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    #battery {
+      font-size: 11px;
+      color: #4a9;
+      padding: 4px 10px;
+      background: #111;
+      border-radius: 4px;
+      border: 1px solid #222;
+      display: none;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #555;
+      transition: background 0.3s;
+    }
+
+    .dot.connected {
+      background: #4a9;
+    }
+
+    .dot.connecting {
+      background: #ea3;
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      border: none;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: #e8e8e8;
+      color: #0a0a0a;
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: #888;
+      border: 1px solid #333;
+    }
+
+    .btn-primary:hover {
+      background: #fff;
+    }
+
+    .btn-secondary:hover {
+      border-color: #555;
+      color: #aaa;
+    }
+
+    .main {
+      display: flex;
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 24px;
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    .controls {
+      flex: 1 1 320px;
+      min-width: 280px;
+    }
+
+    .preview-col {
+      flex: 1 1 300px;
+      min-width: 260px;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 2px;
+      margin-bottom: 16px;
+      background: #111;
+      border-radius: 8px;
+      padding: 3px;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 8px 12px;
+      background: transparent;
+      color: #888;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      transition: all 0.2s;
+    }
+
+    .tab.active {
+      background: #222;
+      color: #e8e8e8;
+    }
+
+    .drop-zone {
+      width: 100%;
+      padding: 32px 16px;
+      background: #111;
+      border: 2px dashed #333;
+      border-radius: 8px;
+      color: #aaa;
+      font-size: 13px;
+      cursor: pointer;
+      font-family: inherit;
+      margin-bottom: 16px;
+      text-align: center;
+      transition: border-color 0.2s;
+    }
+
+    .drop-zone:hover,
+    .drop-zone.dragover {
+      border-color: #666;
+    }
+
+    textarea {
+      width: 100%;
+      background: #111;
+      border: 1px solid #222;
+      border-radius: 8px;
+      color: #e8e8e8;
+      padding: 12px;
+      font-size: 14px;
+      font-family: inherit;
+      resize: vertical;
+      outline: none;
+    }
+
+    textarea:focus {
+      border-color: #444;
+    }
+
+    .settings-box {
+      background: #111;
+      border-radius: 8px;
+      border: 1px solid #1a1a1a;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    .settings-title {
+      font-size: 11px;
+      color: #555;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 12px;
+    }
+
+    .setting-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .setting-label {
+      font-size: 12px;
+      color: #b8b8b8;
+    }
+
+    .setting-hint {
+      font-size: 10px;
+      color: #888;
+    }
+
+    .density-btn {
+      width: 32px;
+      height: 28px;
+      background: transparent;
+      color: #555;
+      border: 1px solid #222;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .density-btn.active {
+      background: #333;
+      color: #e8e8e8;
+      border-color: #444;
+    }
+
+    .toggle {
+      width: 40px;
+      height: 22px;
+      border-radius: 11px;
+      border: none;
+      background: #222;
+      cursor: pointer;
+      position: relative;
+      transition: background 0.2s;
+    }
+
+    .toggle.on {
+      background: #4a9;
+    }
+
+    .toggle-knob {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #e8e8e8;
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      transition: left 0.2s;
+    }
+
+    .toggle.on .toggle-knob {
+      left: 21px;
+    }
+
+    .print-btn {
+      width: 100%;
+      padding: 14px;
+      background: #222;
+      color: #444;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: not-allowed;
+      font-family: inherit;
+      letter-spacing: 0.02em;
+      transition: all 0.2s;
+    }
+
+    .print-btn.ready {
+      background: #e8e8e8;
+      color: #0a0a0a;
+      cursor: pointer;
+    }
+
+    .print-btn.ready:hover {
+      background: #fff;
+    }
+
+    .preview-label {
+      font-size: 11px;
+      color: #555;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+
+    .preview-box {
+      background: #fff;
+      border-radius: 8px;
+      padding: 2px;
+      margin-bottom: 16px;
+      min-height: 100px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    #previewCanvas {
+      max-width: 100%;
+      height: auto;
+      image-rendering: pixelated;
+    }
+
+    .log-box {
+      background: #111;
+      border: 1px solid #1a1a1a;
+      border-radius: 8px;
+      padding: 12px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 10px;
+      line-height: 1.7;
+    }
+
+    .log-entry {
+      color: #aaa;
+    }
+
+    .log-entry.send {
+      color: #6a8;
+    }
+
+    .log-entry.error {
+      color: #c66;
+    }
+
+    .footer-note {
+      margin-top: 16px;
+      font-size: 10px;
+      color: #777;
+      line-height: 1.6;
+    }
+
+    .no-bluetooth {
+      margin-top: 12px;
+      padding: 12px;
+      background: #1a1010;
+      border: 1px solid #331a1a;
+      border-radius: 8px;
+      font-size: 11px;
+      color: #c66;
+      line-height: 1.5;
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .slider-row label {
+      font-size: 11px;
+      color: #666;
+    }
+
+    .slider-row input[type=range] {
+      flex: 1;
+    }
+
+    .slider-row span {
+      font-size: 11px;
+      color: #888;
+      min-width: 36px;
+      text-align: right;
+    }
+
+    input[type=range] {
+      -webkit-appearance: none;
+      height: 4px;
+      background: #333;
+      border-radius: 2px;
+      outline: none;
+    }
+
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #e8e8e8;
+      cursor: pointer;
+    }
+  </style>
+</head>
+
+<body>
+
+  <header>
+    <div class="header-left">
+      <div class="logo">🖨</div>
+      <div>
+        <div class="title">C&Co 3128</div>
+        <div class="subtitle">BLE thermal printer</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div id="battery"></div>
+      <div class="dot" id="statusDot"></div>
+      <button class="btn btn-primary" id="connectBtn" onclick="toggleConnect()">Connect</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <div class="controls">
+      <!-- Tabs -->
+      <div class="tabs">
+        <button class="tab active" data-tab="image" onclick="switchTab('image')">Image</button>
+        <button class="tab" data-tab="text" onclick="switchTab('text')">Text</button>
+        <button class="tab" data-tab="test" onclick="switchTab('test')">Test</button>
+      </div>
+
+      <!-- Image tab -->
+      <div class="tab-content active" id="tab-image">
+        <input type="file" id="fileInput" accept="image/*" style="display:none" onchange="handleFile(this.files[0])">
+        <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+          Drop image here or click to browse
+        </div>
+      </div>
+
+      <!-- Text tab -->
+      <div class="tab-content" id="tab-text">
+        <textarea id="textInput" rows="3" placeholder="Type something..." oninput="renderText()">Hello World</textarea>
+        <div class="slider-row">
+          <label>Size</label>
+          <input type="range" id="fontSizeSlider" min="16" max="96" value="48" oninput="renderText()">
+          <span id="fontSizeLabel">48px</span>
+        </div>
+      </div>
+
+      <!-- Test tab -->
+      <div class="tab-content" id="tab-test">
+        <div style="padding: 16px 0; color: #666; font-size: 12px;">
+          Prints a test pattern with alignment marks and a gradient bar.
+        </div>
+      </div>
+
+      <!-- Settings -->
+      <div class="settings-box">
+        <div class="settings-title">Print settings</div>
+
+        <div class="setting-row">
+          <div class="setting-label">Density</div>
+          <div style="display:flex;gap:4px">
+            <button class="density-btn" data-density="0" onclick="setDensity(0)">☀</button>
+            <button class="density-btn active" data-density="1" onclick="setDensity(1)">◐</button>
+            <button class="density-btn" data-density="2" onclick="setDensity(2)">●</button>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Dither</div>
+            <div class="setting-hint">Better for photos & gradients</div>
+          </div>
+          <button class="toggle" id="toggleDither" onclick="toggleOption('dither')">
+            <div class="toggle-knob"></div>
+          </button>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Invert</div>
+            <div class="setting-hint">Swap black and white</div>
+          </div>
+          <button class="toggle" id="toggleInvert" onclick="toggleOption('invert')">
+            <div class="toggle-knob"></div>
+          </button>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Label mode</div>
+            <div class="setting-hint">For sticker/label paper</div>
+          </div>
+          <button class="toggle" id="toggleLabel" onclick="toggleOption('label')">
+            <div class="toggle-knob"></div>
+          </button>
+        </div>
+      </div>
+
+      <button class="print-btn" id="printBtn" onclick="doPrint()">Connect printer first</button>
+
+      <div id="noBluetooth" class="no-bluetooth" style="display:none">
+        Web Bluetooth is not supported in this browser. Use Chrome, Edge, or Opera on desktop.
+        Firefox and Safari do not support Web Bluetooth.
+      </div>
+    </div>
+
+    <div class="preview-col">
+      <div class="preview-label">Preview</div>
+      <div class="preview-box">
+        <canvas id="previewCanvas" width="384" height="100"></canvas>
+      </div>
+
+      <div class="preview-label">Log</div>
+      <div class="log-box" id="logBox">
+        <div class="log-entry">Waiting for connection...</div>
+      </div>
+
+      <div class="footer-note">
+        Requires Chrome, Edge, or Opera with Web Bluetooth.<br>
+        Based on reverse-engineered LuckPrinter SDK protocol.
+        <br><br>
+        <a href="https://github.com/" style="color:#555">GitHub</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden working canvas -->
+  <canvas id="workCanvas" style="display:none"></canvas>
+
+  <script>
+    // ── State ──────────────────────────────────────────────────────────
+    const PRINT_WIDTH = 384;
+    const CHUNK_SIZE = 100;
+    const CHUNK_DELAY = 50;
+
+    let bleDevice = null;
+    let writeChar = null;
+    let connected = false;
+    let printing = false;
+    let currentTab = 'image';
+
+    let settings = { density: 1, dither: false, invert: false, label: false };
+
+    const workCanvas = document.getElementById('workCanvas');
+    const previewCanvas = document.getElementById('previewCanvas');
+    const workCtx = workCanvas.getContext('2d');
+    const previewCtx = previewCanvas.getContext('2d');
+
+    // ── Check Web Bluetooth ────────────────────────────────────────────
+    if (!navigator.bluetooth) {
+      document.getElementById('noBluetooth').style.display = 'block';
+    }
+
+    // ── Logging ────────────────────────────────────────────────────────
+    function addLog(msg, type = '') {
+      const box = document.getElementById('logBox');
+      const div = document.createElement('div');
+      div.className = 'log-entry' + (type ? ' ' + type : '');
+      div.textContent = new Date().toLocaleTimeString() + ' ' + msg;
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+      // Keep last 60 entries
+      while (box.children.length > 60) box.removeChild(box.firstChild);
+    }
+
+    // ── BLE Connection ─────────────────────────────────────────────────
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    async function toggleConnect() {
+      if (connected) {
+        if (bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
+        connected = false;
+        writeChar = null;
+        updateUI();
+        addLog('Disconnected');
+      } else {
+        await doConnect();
+      }
+    }
+
+    async function doConnect() {
+      try {
+        updateStatus('connecting');
+        addLog('Scanning for printer...');
+
+        bleDevice = await navigator.bluetooth.requestDevice({
+          filters: [
+            { namePrefix: 'C&Co' },
+          ],
+          optionalServices: [0xff00],
+        });
+
+        addLog('Found: ' + (bleDevice.name || 'unknown'));
+
+        bleDevice.addEventListener('gattserverdisconnected', () => {
+          connected = false;
+          writeChar = null;
+          updateUI();
+          addLog('Disconnected (device)', 'error');
+        });
+
+        const server = await bleDevice.gatt.connect();
+        const service = await server.getPrimaryService(0xff00);
+        writeChar = await service.getCharacteristic(0xff02);
+
+        try {
+          const notifyChar = await service.getCharacteristic(0xff01);
+          await notifyChar.startNotifications();
+          notifyChar.addEventListener('characteristicvaluechanged', (e) => {
+            const val = new Uint8Array(e.target.value.buffer);
+            const hex = Array.from(val).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            let ascii = '';
+            try { ascii = new TextDecoder().decode(val); } catch { }
+            addLog('← ' + hex + (ascii && /^[\x20-\x7e]+$/.test(ascii) ? ' (' + ascii + ')' : ''), 'send');
+
+            // Battery check
+            if (val.length >= 2 && val[1] >= 0 && val[1] <= 100) {
+              const bat = document.getElementById('battery');
+              bat.textContent = '🔋 ' + val[1] + '%';
+              bat.style.display = 'block';
+              bat.style.color = val[1] > 20 ? '#4a9' : '#e55';
+            }
+          });
+        } catch (e) {
+          addLog('Notifications: ' + e.message);
+        }
+
+        connected = true;
+        updateUI();
+        addLog('Connected!');
+
+        // Query battery
+        await sleep(300);
+        await writeChar.writeValueWithoutResponse(new Uint8Array([0x10, 0xff, 0x50, 0xf1]));
+
+      } catch (e) {
+        connected = false;
+        updateUI();
+        addLog('Connection failed: ' + e.message, 'error');
+      }
+    }
+
+    async function sendChunked(data) {
+      let sent = 0;
+      while (sent < data.length) {
+        const chunk = data.slice(sent, sent + CHUNK_SIZE);
+        await writeChar.writeValueWithoutResponse(chunk);
+        sent += chunk.length;
+        await sleep(CHUNK_DELAY);
+      }
+      addLog('→ Sent ' + data.length.toLocaleString() + ' bytes', 'send');
+    }
+
+    // ── UI Updates ─────────────────────────────────────────────────────
+    function updateStatus(s) {
+      const dot = document.getElementById('statusDot');
+      dot.className = 'dot' + (s === 'connected' ? ' connected' : s === 'connecting' ? ' connecting' : '');
+    }
+
+    function updateUI() {
+      updateStatus(connected ? 'connected' : 'disconnected');
+      const btn = document.getElementById('connectBtn');
+      btn.textContent = connected ? 'Disconnect' : 'Connect';
+      btn.className = 'btn ' + (connected ? 'btn-secondary' : 'btn-primary');
+      if (!connected) document.getElementById('battery').style.display = 'none';
+      updatePrintBtn();
+    }
+
+    function updatePrintBtn() {
+      const btn = document.getElementById('printBtn');
+      const ready = connected && !printing && workCanvas.width > 0;
+      btn.className = 'print-btn' + (ready ? ' ready' : '');
+      btn.textContent = printing ? 'Printing...' : !connected ? 'Connect printer first' : 'Print';
+    }
+
+    // ── Tabs ───────────────────────────────────────────────────────────
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + tab));
+
+      if (tab === 'text') renderText();
+      if (tab === 'test') renderTest();
+    }
+
+    // ── Settings ───────────────────────────────────────────────────────
+    function setDensity(d) {
+      settings.density = d;
+      document.querySelectorAll('.density-btn').forEach(b => b.classList.toggle('active', parseInt(b.dataset.density) === d));
+    }
+
+    function toggleOption(opt) {
+      settings[opt] = !settings[opt];
+      const el = document.getElementById('toggle' + opt.charAt(0).toUpperCase() + opt.slice(1));
+      el.classList.toggle('on', settings[opt]);
+      updatePreview();
+    }
+
+    // ── Image Loading ──────────────────────────────────────────────────
+    function handleFile(file) {
+      if (!file || !file.type.startsWith('image/')) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const ratio = PRINT_WIDTH / img.width;
+          const newH = Math.round(img.height * ratio);
+          workCanvas.width = PRINT_WIDTH;
+          workCanvas.height = newH;
+          workCtx.fillStyle = 'white';
+          workCtx.fillRect(0, 0, PRINT_WIDTH, newH);
+          workCtx.drawImage(img, 0, 0, PRINT_WIDTH, newH);
+          updatePreview();
+          updatePrintBtn();
+          addLog('Image loaded: ' + img.width + 'x' + img.height + ' → ' + PRINT_WIDTH + 'x' + newH);
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // Drag and drop
+    const dropZone = document.getElementById('dropZone');
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file) handleFile(file);
+    });
+
+    // ── Text Rendering ─────────────────────────────────────────────────
+    function renderText() {
+      const text = document.getElementById('textInput').value || ' ';
+      const fontSize = parseInt(document.getElementById('fontSizeSlider').value);
+      document.getElementById('fontSizeLabel').textContent = fontSize + 'px';
+
+      const padding = 20;
+      const lineHeight = fontSize * 1.3;
+      const lines = text.split('\n');
+      const h = Math.max(60, Math.round(lines.length * lineHeight + padding * 2));
+
+      workCanvas.width = PRINT_WIDTH;
+      workCanvas.height = h;
+      workCtx.fillStyle = 'white';
+      workCtx.fillRect(0, 0, PRINT_WIDTH, h);
+      workCtx.fillStyle = 'black';
+      workCtx.font = 'bold ' + fontSize + 'px sans-serif';
+      workCtx.textAlign = 'center';
+      workCtx.textBaseline = 'top';
+
+      lines.forEach((line, i) => {
+        workCtx.fillText(line, PRINT_WIDTH / 2, padding + i * lineHeight);
+      });
+
+      updatePreview();
+      updatePrintBtn();
+    }
+
+    // ── Test Pattern ───────────────────────────────────────────────────
+    function renderTest() {
+      const h = 200;
+      workCanvas.width = PRINT_WIDTH;
+      workCanvas.height = h;
+      workCtx.fillStyle = 'white';
+      workCtx.fillRect(0, 0, PRINT_WIDTH, h);
+
+      workCtx.strokeStyle = 'black';
+      workCtx.lineWidth = 2;
+      workCtx.strokeRect(1, 1, PRINT_WIDTH - 2, h - 2);
+
+      workCtx.fillStyle = 'black';
+      workCtx.font = 'bold 36px sans-serif';
+      workCtx.textAlign = 'center';
+      workCtx.fillText('TEST PRINT', PRINT_WIDTH / 2, 45);
+      workCtx.fillText(PRINT_WIDTH + 'px wide', PRINT_WIDTH / 2, 95);
+
+      // Gradient
+      for (let x = 20; x < PRINT_WIDTH - 20; x++) {
+        const g = Math.round(((x - 20) / (PRINT_WIDTH - 40)) * 255);
+        workCtx.fillStyle = 'rgb(' + g + ',' + g + ',' + g + ')';
+        workCtx.fillRect(x, 120, 1, 30);
+      }
+
+      workCtx.font = '16px sans-serif';
+      workCtx.fillStyle = 'black';
+      workCtx.fillText('gradient bar', PRINT_WIDTH / 2, 170);
+
+      // Checkerboard
+      workCtx.fillStyle = 'black';
+      for (let cy = 160; cy < 195; cy += 4) {
+        for (let cx = 10; cx < 50; cx += 4) {
+          if (((cx + cy) / 4 | 0) % 2 === 0) workCtx.fillRect(cx, cy, 4, 4);
+        }
+      }
+
+      updatePreview();
+      updatePrintBtn();
+    }
+
+    // ── Preview ────────────────────────────────────────────────────────
+    function updatePreview() {
+      const w = workCanvas.width;
+      const h = workCanvas.height;
+      if (w === 0 || h === 0) return;
+
+      previewCanvas.width = w;
+      previewCanvas.height = h;
+
+      const srcData = workCtx.getImageData(0, 0, w, h).data;
+      const grey = new Float32Array(w * h);
+      for (let i = 0; i < w * h; i++) {
+        grey[i] = srcData[i * 4] * 0.299 + srcData[i * 4 + 1] * 0.587 + srcData[i * 4 + 2] * 0.114;
+      }
+
+      if (settings.dither) {
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const idx = y * w + x;
+            const old = grey[idx];
+            const nw = old >= 128 ? 255 : 0;
+            grey[idx] = nw;
+            const err = old - nw;
+            if (x + 1 < w) grey[idx + 1] += err * 7 / 16;
+            if (y + 1 < h) {
+              if (x > 0) grey[(y + 1) * w + (x - 1)] += err * 3 / 16;
+              grey[(y + 1) * w + x] += err * 5 / 16;
+              if (x + 1 < w) grey[(y + 1) * w + (x + 1)] += err * 1 / 16;
+            }
+          }
+        }
+      }
+
+      const out = previewCtx.createImageData(w, h);
+      for (let i = 0; i < w * h; i++) {
+        const val = Math.max(0, Math.min(255, grey[i]));
+        const dark = settings.invert ? val >= 128 : val < 128;
+        const c = dark ? 0 : 255;
+        out.data[i * 4] = c;
+        out.data[i * 4 + 1] = c;
+        out.data[i * 4 + 2] = c;
+        out.data[i * 4 + 3] = 255;
+      }
+      previewCtx.putImageData(out, 0, 0);
+    }
+
+    // ── Bitmap Conversion ──────────────────────────────────────────────
+    function canvasToBitmap() {
+      const w = workCanvas.width;
+      const h = workCanvas.height;
+      const widthBytes = Math.ceil(w / 8);
+      const srcData = workCtx.getImageData(0, 0, w, h).data;
+
+      const grey = new Float32Array(w * h);
+      for (let i = 0; i < w * h; i++) {
+        grey[i] = srcData[i * 4] * 0.299 + srcData[i * 4 + 1] * 0.587 + srcData[i * 4 + 2] * 0.114;
+      }
+
+      if (settings.dither) {
+        for (let y = 0; y < h; y++) {
+          for (let x = 0; x < w; x++) {
+            const idx = y * w + x;
+            const old = grey[idx];
+            const nw = old >= 128 ? 255 : 0;
+            grey[idx] = nw;
+            const err = old - nw;
+            if (x + 1 < w) grey[idx + 1] += err * 7 / 16;
+            if (y + 1 < h) {
+              if (x > 0) grey[(y + 1) * w + (x - 1)] += err * 3 / 16;
+              grey[(y + 1) * w + x] += err * 5 / 16;
+              if (x + 1 < w) grey[(y + 1) * w + (x + 1)] += err * 1 / 16;
+            }
+          }
+        }
+      }
+
+      const bitmap = new Uint8Array(widthBytes * h);
+      for (let y = 0; y < h; y++) {
+        for (let xb = 0; xb < widthBytes; xb++) {
+          let byte = 0;
+          for (let bit = 0; bit < 8; bit++) {
+            const x = xb * 8 + bit;
+            if (x < w) {
+              const val = Math.max(0, Math.min(255, grey[y * w + x]));
+              const dark = settings.invert ? val >= 128 : val < 128;
+              if (dark) byte |= (128 >> bit);
+            }
+          }
+          bitmap[y * widthBytes + xb] = byte;
+        }
+      }
+
+      // Build GS v 0 command
+      const header = new Uint8Array([
+        0x1d, 0x76, 0x30, 0x00,
+        widthBytes & 0xff, (widthBytes >> 8) & 0xff,
+        h & 0xff, (h >> 8) & 0xff,
+      ]);
+      const result = new Uint8Array(header.length + bitmap.length);
+      result.set(header);
+      result.set(bitmap, header.length);
+      return result;
+    }
+
+    // ── Print ──────────────────────────────────────────────────────────
+    async function doPrint() {
+      if (!connected || !writeChar || printing) return;
+      printing = true;
+      updatePrintBtn();
+
+      try {
+        const gsCmd = canvasToBitmap();
+
+        addLog('Enabling printer...');
+        await writeChar.writeValueWithoutResponse(new Uint8Array([0x10, 0xff, 0xf1, 0x03]));
+        await sleep(300);
+
+        addLog('Waking up...');
+        await writeChar.writeValueWithoutResponse(new Uint8Array(12));
+        await sleep(300);
+
+        // Density
+        await writeChar.writeValueWithoutResponse(new Uint8Array([0x10, 0xff, 0x10, 0x00, settings.density]));
+        await sleep(200);
+
+        // Label mode start
+        if (settings.label) {
+          await writeChar.writeValueWithoutResponse(new Uint8Array([0x1f, 0x11, 0x51]));
+          await sleep(200);
+        }
+
+        addLog('Sending bitmap (' + gsCmd.length.toLocaleString() + ' bytes)...');
+        await sendChunked(gsCmd);
+        await sleep(2000);
+
+        if (settings.label) {
+          addLog('Positioning label...');
+          await writeChar.writeValueWithoutResponse(new Uint8Array([0x1d, 0x0c]));
+          await sleep(300);
+          await writeChar.writeValueWithoutResponse(new Uint8Array([0x1f, 0x11, 0x50]));
+          await sleep(200);
+        } else {
+          addLog('Feeding paper...');
+          await writeChar.writeValueWithoutResponse(new Uint8Array([0x1b, 0x4a, 80]));
+          await sleep(300);
+        }
+
+        addLog('Stopping job...');
+        await writeChar.writeValueWithoutResponse(new Uint8Array([0x10, 0xff, 0xf1, 0x45]));
+        await sleep(3000);
+
+        addLog('Print complete!');
+      } catch (e) {
+        addLog('Print error: ' + e.message, 'error');
+      }
+
+      printing = false;
+      updatePrintBtn();
+    }
+
+    // ── Init ───────────────────────────────────────────────────────────
+    renderTest();
+  </script>
+</body>
+
+</html>
