@@ -1,7 +1,8 @@
 # DP-D80 / D80 family BLE protocol notes
 
 Reverse-engineered from Luck Jingle v2.7.16 (`com.dingdang.newprint`), decompiled
-with JADX. **Not yet verified against real hardware** — see [print_d80.py](print_d80.py).
+with JADX, and **confirmed against a real D80** (model string `DYD80`, firmware
+`V1.5.2`, BLE name `DP_D80_<serial>_LE`, 200dpi) — see [print_d80.py](print_d80.py).
 
 Unlike the DP-L1S (see [PROTOCOL.md](PROTOCOL.md)), the D80 is handled by a
 different branch of the LuckPrinter SDK class hierarchy:
@@ -75,7 +76,25 @@ so they should carry over directly:
    compiled ARM/x86 code, not something JADX can turn back into readable
    logic without a disassembler (Ghidra) and a lot more effort.
 
-## The open bet: raw GS v 0 instead of LIHU compression
+## Implementation notes from testing
+
+- **BLE chunk size must respect the negotiated ATT MTU, not a fixed constant.**
+  `print.py`'s 512-byte chunk size (presumably fine on the platform the DP-L1S
+  was tested on) throws `OSError: [WinError -2147024809]` ("the parameter is
+  incorrect") on Windows against the D80: bleak's WinRT backend negotiated an
+  MTU of 247 for this connection, and writing a chunk larger than `MTU - 3`
+  fails outright rather than being silently truncated/split. `print_d80.py`
+  reads `client.mtu_size` and clamps chunk size to `max(20, min(512, mtu - 3))`
+  per-connection instead of assuming a fixed size.
+- **Battery response is 2 bytes, `byte[1]` is the percentage** — same as
+  documented for the DP-L1S in PROTOCOL.md, e.g. observed raw `00 41` = 65%.
+  Watch out if you parse this generically: `byte[0]` here happened to be
+  `0x00` and `byte[1]=0x41` which is also the ASCII character `'A'`, so a
+  naive "if it decodes as printable ASCII, treat it as text" heuristic (used
+  for Model/Version/Serial) will misidentify a battery reading as a text
+  response if you check it before the battery-specific parse.
+
+## Confirmed: raw GS v 0 works instead of LIHU compression
 
 `print_d80.py` sides-steps the native compression entirely and sends a plain,
 uncompressed ESC/POS `GS v 0` raster image — the exact same header/bit-packing
@@ -88,13 +107,12 @@ format `print.py` uses for the DP-L1S:
 This is the same bet the original DP-L1S project made and it paid off there
 (that device is *also* configured with `compress=true` in the SDK, yet the
 plain raster command works fine — the compression is a bandwidth optimization
-the app chooses to use, not something the firmware exclusively accepts). Given
-the D80 shares the same command family (`10 FF F1 03`, wakeup, `1B 4A`,
-`10 FF F1 45`), there's a reasonable chance its firmware also still parses
-standard `GS v 0`. **This is unconfirmed** — it needs a real print test.
+the app chooses to use, not something the firmware exclusively accepts). It
+paid off here too: **a real D80 printed the test pattern correctly** over the
+uncompressed path, no LIHU decoding needed.
 
-If it doesn't work (nothing prints, garbage prints, or it times out), the
-fallback options, roughly in order of effort:
+If a future firmware/model in this family *doesn't* accept it (nothing prints,
+garbage prints, or it times out), the fallback options, roughly in order of effort:
 - Capture a real print job's BLE traffic (Android "Bluetooth HCI snoop log"
   while printing from Luck Jingle) and compare the actual bytes sent against
   the LIHU-compressed structure below, to reverse it from real samples

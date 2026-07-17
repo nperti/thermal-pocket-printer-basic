@@ -3,19 +3,20 @@
 print_d80: Print to the DP-D80 / D80 family thermal printer (Letter/A4,
 LuckPrinter SDK) directly from your computer via BLE, no app required.
 
-EXPERIMENTAL / UNVERIFIED AGAINST HARDWARE. This was built by decompiling
-Luck Jingle v2.7.16 (com.dingdang.newprint) with JADX and reading the
+Confirmed working against real hardware (model string "DYD80", firmware
+V1.5.2, BLE name "DP_D80_...", 200dpi). Built by decompiling Luck Jingle
+v2.7.16 (com.dingdang.newprint) with JADX and reading the
 com.luckprinter.sdk_new.device.normal.a4.DP_D80 / BaseA4Device classes.
-The control commands (enable, wakeup, paper type, feed, stop) are the same
-DLE/GS/ESC commands documented in PROTOCOL.md for the DP-L1S and are very
-likely correct. The bitmap format is NOT verified: the app always sends a
-proprietary-compressed image for this device (native codeLihu() codec),
-which was not reverse engineered here. This script instead sends a plain
-uncompressed ESC/POS "GS v 0" raster image -- the same approach that works
-on the DP-L1S despite it also nominally being configured for compression.
-It's a reasonable bet since GS v 0 is a standard command family the
-firmware likely still parses, but it has not been confirmed on real D80
-hardware. Start with `info` and a small `test` print before anything big.
+
+The app always sends this device a proprietary-compressed image (native
+codeLihu() codec), which was not reverse engineered here -- instead this
+script sends a plain uncompressed ESC/POS "GS v 0" raster image, the same
+approach that works on the DP-L1S despite it too being nominally configured
+for compression. That bet paid off: a real D80 printed the test pattern
+correctly over this uncompressed path. See PROTOCOL_D80.md for details.
+
+Not yet exercised: label/tag modes, the 300dpi DP_D80H variant, and
+PCPS_D80 rebrands (only differ in density range, see PROTOCOL_D80.md).
 
 Usage:
   python3 print_d80.py scan                     Scan for nearby BLE printers
@@ -274,14 +275,22 @@ def build_gs_v_0(bitmap_data, width_bytes, height_px, mode=0):
 # ── BLE communication ─────────────────────────────────────────────────
 
 async def ble_send_chunked(client, data, label="data"):
+    # The negotiated ATT MTU varies by platform/backend -- Windows (WinRT)
+    # in particular often stays well below the 512-byte chunk size that
+    # works over bleak on Linux/macOS, and writing a chunk bigger than
+    # (mtu - 3) throws an "invalid parameter" WinError. Clamp to what this
+    # connection actually negotiated.
+    mtu = getattr(client, "mtu_size", None) or 23
+    chunk_size = max(20, min(CHUNK_SIZE, mtu - 3))
+
     total = len(data)
     sent = 0
     while sent < total:
-        chunk = data[sent:sent + CHUNK_SIZE]
+        chunk = data[sent:sent + chunk_size]
         await client.write_gatt_char(WRITE_CHAR_UUID, chunk, response=False)
         sent += len(chunk)
         await asyncio.sleep(CHUNK_DELAY)
-    print(f"  Sent {label}: {total:,} bytes ({(total + CHUNK_SIZE - 1) // CHUNK_SIZE} chunks)")
+    print(f"  Sent {label}: {total:,} bytes ({(total + chunk_size - 1) // chunk_size} chunks, {chunk_size}B/chunk, MTU={mtu})")
 
 
 async def ble_command(client, cmd_bytes, label="cmd", wait=0.3):
@@ -295,7 +304,9 @@ async def find_printer(address=None, timeout=8.0):
         return address
 
     print("  Scanning for printers...")
-    devices = await BleakScanner.discover(timeout=timeout)
+    found = await BleakScanner.discover(timeout=timeout, return_adv=True)
+    devices = [d for d, adv in found.values()]
+    rssi_by_address = {d.address: adv.rssi for d, adv in found.values()}
 
     for d in devices:
         name = (d.name or "").upper()
@@ -304,9 +315,9 @@ async def find_printer(address=None, timeout=8.0):
             return d.address
 
     print("  Printer not found. Nearby BLE devices:")
-    for d in sorted(devices, key=lambda x: x.rssi or -999, reverse=True):
+    for d in sorted(devices, key=lambda x: rssi_by_address.get(x.address) or -999, reverse=True):
         if d.name:
-            print(f"    {d.name:30s}  {d.address}  RSSI={d.rssi}")
+            print(f"    {d.name:30s}  {d.address}  RSSI={rssi_by_address.get(d.address)}")
     print("\n  Use --address XX:XX:XX:XX:XX:XX to connect manually.")
     return None
 
@@ -315,11 +326,13 @@ async def find_printer(address=None, timeout=8.0):
 
 async def cmd_scan(args):
     print("Scanning for BLE devices...\n")
-    devices = await BleakScanner.discover(timeout=10.0)
+    found = await BleakScanner.discover(timeout=10.0, return_adv=True)
+    devices = [d for d, adv in found.values()]
+    rssi_by_address = {d.address: adv.rssi for d, adv in found.values()}
 
     printers = []
     others = []
-    for d in sorted(devices, key=lambda x: x.rssi or -999, reverse=True):
+    for d in sorted(devices, key=lambda x: rssi_by_address.get(x.address) or -999, reverse=True):
         if not d.name:
             continue
         name_upper = d.name.upper()
@@ -329,14 +342,14 @@ async def cmd_scan(args):
     if printers:
         print("Printers found:")
         for d in printers:
-            print(f"  * {d.name:30s}  {d.address}  RSSI={d.rssi}")
+            print(f"  * {d.name:30s}  {d.address}  RSSI={rssi_by_address.get(d.address)}")
     else:
         print("No known printers found.")
 
     if others:
         print(f"\nOther BLE devices ({len(others)}):")
         for d in others[:15]:
-            print(f"    {d.name:30s}  {d.address}  RSSI={d.rssi}")
+            print(f"    {d.name:30s}  {d.address}  RSSI={rssi_by_address.get(d.address)}")
 
 
 async def cmd_info(args):
@@ -369,12 +382,15 @@ async def cmd_info(args):
             if received_data:
                 raw = received_data[-1]
                 try:
-                    text = raw.decode('ascii', errors='ignore').strip('\x00')
-                    if text and text.isprintable():
-                        print(f"  {label:12s}: {text}")
-                    elif label == "Battery" and len(raw) >= 2:
-                        print(f"  {label:12s}: {raw[1]}%")
-                    elif label == "Status" and len(raw) >= 1:
+                    # Battery/Status are fixed binary layouts -- check them
+                    # before the generic text guess, since a binary byte can
+                    # coincidentally decode as printable ASCII (e.g. a 65%
+                    # battery reading is byte 0x41, which is also 'A').
+                    if label == "Battery" and len(raw) >= 1:
+                        pct = raw[1] if len(raw) >= 2 else raw[0]
+                        print(f"  {label:12s}: {pct}%  (raw: {raw.hex()})")
+                        continue
+                    if label == "Status" and len(raw) >= 1:
                         status = raw[0]
                         flags = []
                         if status & 0x01: flags.append("printing")
@@ -383,7 +399,11 @@ async def cmd_info(args):
                         if status & 0x08: flags.append("low battery")
                         if status & 0x50: flags.append("overheating")
                         if status & 0x20: flags.append("charging")
-                        print(f"  {label:12s}: {', '.join(flags) if flags else 'ready'}")
+                        print(f"  {label:12s}: {', '.join(flags) if flags else 'ready'}  (raw: {raw.hex()})")
+                        continue
+                    text = raw.decode('ascii', errors='ignore').strip('\x00')
+                    if text and text.isprintable():
+                        print(f"  {label:12s}: {text}")
                     else:
                         print(f"  {label:12s}: {raw.hex()}")
                 except Exception:

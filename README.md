@@ -6,23 +6,38 @@ The DP-L1S is a small thermal pocket printer made by Xiamen Print Future Technol
 
 So I decompiled the Android APK with JADX, reverse-engineered the BLE protocol, and built a Python CLI and a web app that talk to the printer directly. No app, no account, no cloud.
 
+This fork also adds a second CLI, `print_d80.py`, for the **DP-D80** family — a different, Letter/A4-sized printer line from the same manufacturer/app/SDK. See [Compatible printers](#compatible-printers) and [PROTOCOL_D80.md](PROTOCOL_D80.md).
+
 ## Quick start
 
 **Web app (no install, just open in Chrome/Edge/Opera):**
 **https://ChiaraCannolee.github.io/thermal-pocket-printer-basic/**
 
-Web Bluetooth is required, so Firefox and Safari are out. Works on macOS and Linux. Windows is waiting on better Web Bluetooth support.
+Web Bluetooth is required, so Firefox and Safari are out. Works on macOS and Linux. Windows is waiting on better Web Bluetooth support. (The web app targets the DP-L1S only; there's no D80 web UI yet.)
 
 **Python CLI (for automation and batch jobs):**
 
 ```bash
 pip install bleak Pillow
 
+python3 print.py --dither image photo.png     # photo with Floyd-Steinberg
 python3 print.py test                         # test pattern
-python3 print.py image photo.png --dither     # photo with Floyd-Steinberg
 python3 print.py text "Hello World"
-python3 print.py text "My Label" --label      # sticker/label paper mode
+python3 print.py --label text "My Label"      # sticker/label paper mode
 python3 print.py info                         # battery, firmware, model
+```
+
+Note: global options (`--dither`, `--label`, `--density`, etc.) must come *before* the subcommand (`test`/`image`/`text`/...), not after — that's how argparse subparsers work here.
+
+**DP-D80 (Letter/A4 family):**
+
+```bash
+pip install bleak Pillow    # same deps
+
+python3 print_d80.py info                     # confirm it's a D80/D80H/PCPS_D80
+python3 print_d80.py test                     # small test pattern
+python3 print_d80.py --dither image photo.png
+python3 print_d80.py text "Hello World"
 ```
 
 ## Features
@@ -78,9 +93,33 @@ Options:
   --feed, -f N          Paper feed after print in dots (default: 80)
 ```
 
+**DP-D80:**
+
+```
+python3 print_d80.py <command> [options]
+
+Commands:
+  scan                    Scan for nearby BLE printers
+  info                    Show printer info (model, battery, firmware)
+  test                    Print a small test pattern
+  image <file>            Print an image (PNG, JPG, BMP, etc.)
+  text <string>           Print text
+
+Options:
+  --address, -a           Printer BLE address (skip scanning)
+  --paper 56|77|107|a4|letter   Roll paper width preset (default: a4)
+  --width, -w N           Print width in pixels (overrides --paper)
+  --density, -d 0|1|2|3   Print darkness (0=light .. 2/3=dark, depends on model)
+  --dither                Floyd-Steinberg dithering (better for photos)
+  --invert                Invert colours (white-on-black)
+  --copies, -c N          Number of copies
+```
+
 ## Compatible printers
 
 Confirmed to work with the DP-L1S (sold as Crafts & Co 3128 and other rebrands). Will likely work with other printers in the LuckPrinter family that share the same SDK and `BaseNormalDevice` class — DP-/LuckP-/MiniPocketPrinter series and similar. Print width may differ; check with `python3 print.py info`.
+
+**DP-D80 family (Letter/A4 printers, `print_d80.py`):** confirmed to work with a real DP-D80 (200dpi, model string `DYD80`). This is a different SDK branch (`BaseA4Device`) with its own protocol quirks (paper-type command, roll-width-dependent print width) — see [PROTOCOL_D80.md](PROTOCOL_D80.md). Likely also works with `DP_D80H` (300dpi variant) and `PCPS_D80` rebrands, and possibly the ~90 other `BaseA4Device` models (`DP_A4`, `DP_A80`, `DP_L80`, `MT80`, `TPA46`, ...), though only the plain D80 has actually been tested.
 
 For Fichero D11s and other AiYin-based label printers (different device class, same SDK), see [fichero-printer](https://github.com/0xMH/fichero-printer) by 0xMH.
 
