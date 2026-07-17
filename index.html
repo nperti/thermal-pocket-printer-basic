@@ -438,7 +438,7 @@
       <div class="logo">🖨</div>
       <div>
         <div class="title">C&Co 3128</div>
-        <div class="subtitle">BLE thermal printer</div>
+        <div class="subtitle" id="subtitleText">BLE thermal printer</div>
       </div>
     </div>
     <div class="header-right">
@@ -559,9 +559,30 @@
 
   <script>
     // ── State ──────────────────────────────────────────────────────────
-    const PRINT_WIDTH = 384;
     const CHUNK_SIZE = 100;
     const CHUNK_DELAY = 50;
+
+    // The DP-L1S and DP-D80 families share the same low-level BLE
+    // commands but differ in print width, paper feed, and whether a
+    // "set paper type" command must precede the bitmap. See PROTOCOL.md
+    // / PROTOCOL_D80.md. Detected from the BLE advertised name on connect.
+    const DEVICE_PROFILES = {
+      l1s:  { label: 'DP-L1S',  printWidth: 384,  feedDots: 80,  setPaperType: false },
+      d80:  { label: 'DP-D80',  printWidth: 1616, feedDots: 144, setPaperType: true },
+      d80h: { label: 'DP-D80H', printWidth: 2400, feedDots: 216, setPaperType: true },
+    };
+
+    function detectDeviceProfile(name) {
+      const n = (name || '').toUpperCase();
+      if (n.startsWith('DP_D80H')) return DEVICE_PROFILES.d80h;
+      if (n.startsWith('DP_D80') || n.startsWith('DP-D80') || n.startsWith('D80-') ||
+          n.startsWith('D80_') || n.startsWith('CASA-01') || n.startsWith('PCPS_D80') ||
+          n.startsWith('PCPS-D80')) return DEVICE_PROFILES.d80;
+      return DEVICE_PROFILES.l1s;
+    }
+
+    let deviceProfile = DEVICE_PROFILES.l1s;
+    let PRINT_WIDTH = deviceProfile.printWidth;
 
     let bleDevice = null;
     let writeChar = null;
@@ -601,6 +622,9 @@
         if (bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
         connected = false;
         writeChar = null;
+        deviceProfile = DEVICE_PROFILES.l1s;
+        PRINT_WIDTH = deviceProfile.printWidth;
+        document.getElementById('subtitleText').textContent = 'BLE thermal printer';
         updateUI();
         addLog('Disconnected');
       } else {
@@ -616,11 +640,27 @@
         bleDevice = await navigator.bluetooth.requestDevice({
           filters: [
             { namePrefix: 'C&Co' },
+            { namePrefix: 'DP_D80' },
+            { namePrefix: 'DP-D80' },
+            { namePrefix: 'D80-' },
+            { namePrefix: 'D80_' },
+            { namePrefix: 'CASA-01' },
+            { namePrefix: 'PCPS_D80' },
+            { namePrefix: 'PCPS-D80' },
           ],
           optionalServices: [0xff00],
         });
 
-        addLog('Found: ' + (bleDevice.name || 'unknown'));
+        deviceProfile = detectDeviceProfile(bleDevice.name);
+        PRINT_WIDTH = deviceProfile.printWidth;
+        document.getElementById('subtitleText').textContent = 'BLE thermal printer · ' + deviceProfile.label;
+        addLog('Found: ' + (bleDevice.name || 'unknown') + ' → detected as ' + deviceProfile.label);
+        if (deviceProfile.setPaperType && settings.label) {
+          addLog('Note: label/tag mode is not implemented for ' + deviceProfile.label + ' yet, printing as a plain page instead', 'error');
+        }
+
+        if (currentTab === 'test') renderTest();
+        if (currentTab === 'text') renderText();
 
         bleDevice.addEventListener('gattserverdisconnected', () => {
           connected = false;
@@ -954,8 +994,15 @@
         await writeChar.writeValueWithoutResponse(new Uint8Array([0x10, 0xff, 0x10, 0x00, settings.density]));
         await sleep(200);
 
-        // Label mode start
-        if (settings.label) {
+        // D80 family: BaseA4Device's print flow sets a paper type before
+        // the bitmap; the pocket-printer flow never does this. Label mode
+        // (gap-sensor tag printing) is only wired up for the L1S pocket
+        // printer below -- untested on D80, so it's ignored there.
+        if (deviceProfile.setPaperType) {
+          await writeChar.writeValueWithoutResponse(new Uint8Array([0x1f, 0x80, 0x01, 0x10]));
+          await sleep(200);
+        } else if (settings.label) {
+          // Label mode start (L1S only)
           await writeChar.writeValueWithoutResponse(new Uint8Array([0x1f, 0x11, 0x51]));
           await sleep(200);
         }
@@ -964,7 +1011,7 @@
         await sendChunked(gsCmd);
         await sleep(2000);
 
-        if (settings.label) {
+        if (!deviceProfile.setPaperType && settings.label) {
           addLog('Positioning label...');
           await writeChar.writeValueWithoutResponse(new Uint8Array([0x1d, 0x0c]));
           await sleep(300);
@@ -972,7 +1019,7 @@
           await sleep(200);
         } else {
           addLog('Feeding paper...');
-          await writeChar.writeValueWithoutResponse(new Uint8Array([0x1b, 0x4a, 80]));
+          await writeChar.writeValueWithoutResponse(new Uint8Array([0x1b, 0x4a, deviceProfile.feedDots]));
           await sleep(300);
         }
 
