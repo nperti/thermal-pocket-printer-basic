@@ -454,6 +454,7 @@
       <div class="tabs">
         <button class="tab active" data-tab="image" onclick="switchTab('image')">Image</button>
         <button class="tab" data-tab="text" onclick="switchTab('text')">Text</button>
+        <button class="tab" data-tab="pdf" onclick="switchTab('pdf')">PDF</button>
         <button class="tab" data-tab="test" onclick="switchTab('test')">Test</button>
       </div>
 
@@ -462,6 +463,17 @@
         <input type="file" id="fileInput" accept="image/*" style="display:none" onchange="handleFile(this.files[0])">
         <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
           Drop image here or click to browse
+        </div>
+      </div>
+
+      <!-- PDF tab -->
+      <div class="tab-content" id="tab-pdf">
+        <input type="file" id="pdfInput" accept="application/pdf" style="display:none" onchange="handlePdfFile(this.files[0])">
+        <div class="drop-zone" id="pdfDropZone" onclick="document.getElementById('pdfInput').click()">
+          Drop PDF here or click to browse
+        </div>
+        <div id="pdfPageInfo" style="display:none; font-size:11px; color:#888; margin-top:10px; text-align:center;">
+          Showing page 1 of <span id="pdfPageCount">1</span> in the preview -- all pages print in sequence, one feed between each.
         </div>
       </div>
 
@@ -524,6 +536,21 @@
             <div class="toggle-knob"></div>
           </button>
         </div>
+
+        <div class="setting-row" id="paperWidthRow" style="display:none">
+          <div>
+            <div class="setting-label">Paper width</div>
+            <div class="setting-hint" id="paperWidthHint">1616px</div>
+          </div>
+          <select id="paperWidthSelect" onchange="setPaperWidth(this.value)"
+                  style="background:#111;color:#e8e8e8;border:1px solid #333;border-radius:4px;padding:4px 8px;font-family:inherit;font-size:11px">
+            <option value="56">56mm</option>
+            <option value="77">77mm</option>
+            <option value="107">107mm</option>
+            <option value="a4">210mm (A4)</option>
+            <option value="letter">216mm (Letter)</option>
+          </select>
+        </div>
       </div>
 
       <button class="print-btn" id="printBtn" onclick="doPrint()">Connect printer first</button>
@@ -548,6 +575,7 @@
       <div class="footer-note">
         Requires Chrome, Edge, or Opera with Web Bluetooth.<br>
         Based on reverse-engineered LuckPrinter SDK protocol.
+        PDF rendering via <a href="https://mozilla.github.io/pdf.js/" style="color:#555">pdf.js</a> (Mozilla), bundled locally -- works offline.
         <br><br>
         <a href="https://github.com/" style="color:#555">GitHub</a>
       </div>
@@ -556,6 +584,8 @@
 
   <!-- Hidden working canvas -->
   <canvas id="workCanvas" style="display:none"></canvas>
+
+  <script src="vendor/pdf.min.js"></script>
 
   <script>
     // ── State ──────────────────────────────────────────────────────────
@@ -566,10 +596,19 @@
     // commands but differ in print width, paper feed, and whether a
     // "set paper type" command must precede the bitmap. See PROTOCOL.md
     // / PROTOCOL_D80.md. Detected from the BLE advertised name on connect.
+    //
+    // D80/D80H print width also depends on the roll paper width selected
+    // (BaseA4Device.getPrintWidth() in the SDK) -- the L1S has a single
+    // fixed width instead.
+    const PAPER_WIDTH_PX = {
+      200: { '56': 432, '77': 591, '107': 832, 'a4': 1616, 'letter': 1648 },
+      300: { '56': 648, '77': 887, '107': 1248, 'a4': 2400, 'letter': 2496 },
+    };
+
     const DEVICE_PROFILES = {
-      l1s:  { label: 'DP-L1S',  printWidth: 384,  feedDots: 80,  setPaperType: false },
-      d80:  { label: 'DP-D80',  printWidth: 1616, feedDots: 144, setPaperType: true },
-      d80h: { label: 'DP-D80H', printWidth: 2400, feedDots: 216, setPaperType: true },
+      l1s:  { label: 'DP-L1S',  fixedWidth: 384, feedDots: 80,  setPaperType: false, paperConfigurable: false },
+      d80:  { label: 'DP-D80',  dpi: 200,         feedDots: 144, setPaperType: true,  paperConfigurable: true },
+      d80h: { label: 'DP-D80H', dpi: 300,         feedDots: 216, setPaperType: true,  paperConfigurable: true },
     };
 
     function detectDeviceProfile(name) {
@@ -581,8 +620,24 @@
       return DEVICE_PROFILES.l1s;
     }
 
+    function currentPrintWidth() {
+      if (!deviceProfile.paperConfigurable) return deviceProfile.fixedWidth;
+      return PAPER_WIDTH_PX[deviceProfile.dpi][paperKey];
+    }
+
+    function setPaperWidth(key) {
+      paperKey = key;
+      PRINT_WIDTH = currentPrintWidth();
+      document.getElementById('paperWidthHint').textContent = PRINT_WIDTH + 'px';
+      addLog('Paper width set to ' + key + ' (' + PRINT_WIDTH + 'px)');
+      if (currentTab === 'test') renderTest();
+      if (currentTab === 'text') renderText();
+      if (currentTab === 'pdf' && pdfDoc) renderPdfPageToCanvas(1);
+    }
+
+    let paperKey = 'a4';
     let deviceProfile = DEVICE_PROFILES.l1s;
-    let PRINT_WIDTH = deviceProfile.printWidth;
+    let PRINT_WIDTH = currentPrintWidth();
 
     let bleDevice = null;
     let writeChar = null;
@@ -592,6 +647,8 @@
 
     let settings = { density: 1, dither: false, invert: false, label: false };
 
+    let pdfDoc = null; // pdf.js document proxy for the currently loaded PDF
+
     const workCanvas = document.getElementById('workCanvas');
     const previewCanvas = document.getElementById('previewCanvas');
     const workCtx = workCanvas.getContext('2d');
@@ -600,6 +657,13 @@
     // ── Check Web Bluetooth ────────────────────────────────────────────
     if (!navigator.bluetooth) {
       document.getElementById('noBluetooth').style.display = 'block';
+    }
+
+    // ── Check pdf.js ───────────────────────────────────────────────────
+    // Vendored locally (vendor/) instead of loaded from a CDN, so PDF
+    // printing works fully offline once the page has loaded once.
+    if (window.pdfjsLib) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
     }
 
     // ── Logging ────────────────────────────────────────────────────────
@@ -623,8 +687,10 @@
         connected = false;
         writeChar = null;
         deviceProfile = DEVICE_PROFILES.l1s;
-        PRINT_WIDTH = deviceProfile.printWidth;
+        paperKey = 'a4';
+        PRINT_WIDTH = currentPrintWidth();
         document.getElementById('subtitleText').textContent = 'BLE thermal printer';
+        document.getElementById('paperWidthRow').style.display = 'none';
         updateUI();
         addLog('Disconnected');
       } else {
@@ -652,8 +718,12 @@
         });
 
         deviceProfile = detectDeviceProfile(bleDevice.name);
-        PRINT_WIDTH = deviceProfile.printWidth;
+        paperKey = 'a4';
+        PRINT_WIDTH = currentPrintWidth();
         document.getElementById('subtitleText').textContent = 'BLE thermal printer · ' + deviceProfile.label;
+        document.getElementById('paperWidthRow').style.display = deviceProfile.paperConfigurable ? 'flex' : 'none';
+        document.getElementById('paperWidthSelect').value = paperKey;
+        document.getElementById('paperWidthHint').textContent = PRINT_WIDTH + 'px';
         addLog('Found: ' + (bleDevice.name || 'unknown') + ' → detected as ' + deviceProfile.label);
         if (deviceProfile.setPaperType && settings.label) {
           addLog('Note: label/tag mode is not implemented for ' + deviceProfile.label + ' yet, printing as a plain page instead', 'error');
@@ -661,6 +731,7 @@
 
         if (currentTab === 'test') renderTest();
         if (currentTab === 'text') renderText();
+        if (currentTab === 'pdf' && pdfDoc) renderPdfPageToCanvas(1);
 
         bleDevice.addEventListener('gattserverdisconnected', () => {
           connected = false;
@@ -738,7 +809,8 @@
 
     function updatePrintBtn() {
       const btn = document.getElementById('printBtn');
-      const ready = connected && !printing && workCanvas.width > 0;
+      const hasContent = currentTab === 'pdf' ? !!pdfDoc : workCanvas.width > 0;
+      const ready = connected && !printing && hasContent;
       btn.className = 'print-btn' + (ready ? ' ready' : '');
       btn.textContent = printing ? 'Printing...' : !connected ? 'Connect printer first' : 'Print';
     }
@@ -751,6 +823,8 @@
 
       if (tab === 'text') renderText();
       if (tab === 'test') renderTest();
+      if (tab === 'pdf' && pdfDoc) renderPdfPageToCanvas(1);
+      updatePrintBtn();
     }
 
     // ── Settings ───────────────────────────────────────────────────────
@@ -798,6 +872,54 @@
       dropZone.classList.remove('dragover');
       const file = e.dataTransfer.files[0];
       if (file) handleFile(file);
+    });
+
+    // ── PDF Loading ──────────────────────────────────────────────────────
+    async function handlePdfFile(file) {
+      if (!file || file.type !== 'application/pdf') return;
+      if (!window.pdfjsLib) {
+        addLog('pdf.js failed to load from vendor/pdf.min.js -- PDF printing is unavailable', 'error');
+        return;
+      }
+      try {
+        addLog('Loading PDF: ' + file.name + '...');
+        const buf = await file.arrayBuffer();
+        pdfDoc = await pdfjsLib.getDocument({ data: buf }).promise;
+        document.getElementById('pdfPageCount').textContent = pdfDoc.numPages;
+        document.getElementById('pdfPageInfo').style.display = 'block';
+        await renderPdfPageToCanvas(1);
+        addLog('PDF loaded: ' + file.name + ' (' + pdfDoc.numPages + ' page' + (pdfDoc.numPages === 1 ? '' : 's') + ')');
+        updatePrintBtn();
+      } catch (e) {
+        pdfDoc = null;
+        addLog('Failed to load PDF: ' + e.message, 'error');
+      }
+    }
+
+    async function renderPdfPageToCanvas(pageNum) {
+      const page = await pdfDoc.getPage(pageNum);
+      const unscaledViewport = page.getViewport({ scale: 1 });
+      const scale = PRINT_WIDTH / unscaledViewport.width;
+      const viewport = page.getViewport({ scale });
+
+      workCanvas.width = Math.round(viewport.width);
+      workCanvas.height = Math.round(viewport.height);
+      workCtx.fillStyle = 'white';
+      workCtx.fillRect(0, 0, workCanvas.width, workCanvas.height);
+      await page.render({ canvasContext: workCtx, viewport }).promise;
+
+      updatePreview();
+    }
+
+    // Drag and drop
+    const pdfDropZone = document.getElementById('pdfDropZone');
+    pdfDropZone.addEventListener('dragover', (e) => { e.preventDefault(); pdfDropZone.classList.add('dragover'); });
+    pdfDropZone.addEventListener('dragleave', () => pdfDropZone.classList.remove('dragover'));
+    pdfDropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      pdfDropZone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file) handlePdfFile(file);
     });
 
     // ── Text Rendering ─────────────────────────────────────────────────
@@ -974,58 +1096,75 @@
     }
 
     // ── Print ──────────────────────────────────────────────────────────
+    async function printCurrentCanvas() {
+      const gsCmd = canvasToBitmap();
+
+      addLog('Enabling printer...');
+      await writeChar.writeValueWithoutResponse(new Uint8Array([0x10, 0xff, 0xf1, 0x03]));
+      await sleep(300);
+
+      addLog('Waking up...');
+      await writeChar.writeValueWithoutResponse(new Uint8Array(12));
+      await sleep(300);
+
+      // Density
+      await writeChar.writeValueWithoutResponse(new Uint8Array([0x10, 0xff, 0x10, 0x00, settings.density]));
+      await sleep(200);
+
+      // D80 family: BaseA4Device's print flow sets a paper type before
+      // the bitmap; the pocket-printer flow never does this. Label mode
+      // (gap-sensor tag printing) is only wired up for the L1S pocket
+      // printer below -- untested on D80, so it's ignored there.
+      if (deviceProfile.setPaperType) {
+        await writeChar.writeValueWithoutResponse(new Uint8Array([0x1f, 0x80, 0x01, 0x10]));
+        await sleep(200);
+      } else if (settings.label) {
+        // Label mode start (L1S only)
+        await writeChar.writeValueWithoutResponse(new Uint8Array([0x1f, 0x11, 0x51]));
+        await sleep(200);
+      }
+
+      addLog('Sending bitmap (' + gsCmd.length.toLocaleString() + ' bytes)...');
+      await sendChunked(gsCmd);
+      await sleep(2000);
+
+      if (!deviceProfile.setPaperType && settings.label) {
+        addLog('Positioning label...');
+        await writeChar.writeValueWithoutResponse(new Uint8Array([0x1d, 0x0c]));
+        await sleep(300);
+        await writeChar.writeValueWithoutResponse(new Uint8Array([0x1f, 0x11, 0x50]));
+        await sleep(200);
+      } else {
+        addLog('Feeding paper...');
+        await writeChar.writeValueWithoutResponse(new Uint8Array([0x1b, 0x4a, deviceProfile.feedDots]));
+        await sleep(300);
+      }
+
+      addLog('Stopping job...');
+      await writeChar.writeValueWithoutResponse(new Uint8Array([0x10, 0xff, 0xf1, 0x45]));
+      await sleep(3000);
+    }
+
     async function doPrint() {
       if (!connected || !writeChar || printing) return;
       printing = true;
       updatePrintBtn();
 
       try {
-        const gsCmd = canvasToBitmap();
-
-        addLog('Enabling printer...');
-        await writeChar.writeValueWithoutResponse(new Uint8Array([0x10, 0xff, 0xf1, 0x03]));
-        await sleep(300);
-
-        addLog('Waking up...');
-        await writeChar.writeValueWithoutResponse(new Uint8Array(12));
-        await sleep(300);
-
-        // Density
-        await writeChar.writeValueWithoutResponse(new Uint8Array([0x10, 0xff, 0x10, 0x00, settings.density]));
-        await sleep(200);
-
-        // D80 family: BaseA4Device's print flow sets a paper type before
-        // the bitmap; the pocket-printer flow never does this. Label mode
-        // (gap-sensor tag printing) is only wired up for the L1S pocket
-        // printer below -- untested on D80, so it's ignored there.
-        if (deviceProfile.setPaperType) {
-          await writeChar.writeValueWithoutResponse(new Uint8Array([0x1f, 0x80, 0x01, 0x10]));
-          await sleep(200);
-        } else if (settings.label) {
-          // Label mode start (L1S only)
-          await writeChar.writeValueWithoutResponse(new Uint8Array([0x1f, 0x11, 0x51]));
-          await sleep(200);
-        }
-
-        addLog('Sending bitmap (' + gsCmd.length.toLocaleString() + ' bytes)...');
-        await sendChunked(gsCmd);
-        await sleep(2000);
-
-        if (!deviceProfile.setPaperType && settings.label) {
-          addLog('Positioning label...');
-          await writeChar.writeValueWithoutResponse(new Uint8Array([0x1d, 0x0c]));
-          await sleep(300);
-          await writeChar.writeValueWithoutResponse(new Uint8Array([0x1f, 0x11, 0x50]));
-          await sleep(200);
+        if (currentTab === 'pdf') {
+          if (!pdfDoc) {
+            addLog('No PDF loaded', 'error');
+          } else {
+            for (let p = 1; p <= pdfDoc.numPages; p++) {
+              addLog('PDF page ' + p + ' of ' + pdfDoc.numPages + '...');
+              await renderPdfPageToCanvas(p);
+              await printCurrentCanvas();
+            }
+            await renderPdfPageToCanvas(1); // restore page-1 preview
+          }
         } else {
-          addLog('Feeding paper...');
-          await writeChar.writeValueWithoutResponse(new Uint8Array([0x1b, 0x4a, deviceProfile.feedDots]));
-          await sleep(300);
+          await printCurrentCanvas();
         }
-
-        addLog('Stopping job...');
-        await writeChar.writeValueWithoutResponse(new Uint8Array([0x10, 0xff, 0xf1, 0x45]));
-        await sleep(3000);
 
         addLog('Print complete!');
       } catch (e) {
